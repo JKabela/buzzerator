@@ -21,10 +21,8 @@ SECRETS_CHECKLIST.md
 # Hardcodes /home/dev/nas/Volume1/... paths; not portable to other installs.
 tools/
 
-# ── Internal task plans & workflow ───────────────────────────────────────────
-# Instance-specific: personal URLs, NAS paths, stale prerequisite state.
-_management/tasks/
-_management/WORKFLOW.md
+# ── Internal planning & management ───────────────────────────────────────────
+_management/
 
 # ── Python cache ─────────────────────────────────────────────────────────────
 __pycache__/
