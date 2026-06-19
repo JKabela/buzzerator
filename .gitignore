@@ -1,0 +1,37 @@
+# ── Credentials & secrets ────────────────────────────────────────────────────
+**/secrets.yaml
+**/*_token*
+**/*.env
+CREDENTIALS.local.yaml
+
+# ── AI / agent context (local-only, never public) ────────────────────────────
+CLAUDE.md
+.cursor/
+
+# ── Internal planning & orchestration artifacts ───────────────────────────────
+# These contain personal URLs, NAS paths, internal state, or are stale QA logs
+# not useful to a new installer.
+DEVELOPMENT_REPORT.md
+IMPLEMENTATION_READY.md
+REVISED_PLAN_SUMMARY.md
+QA_REPORT_CONSOLIDATED.md
+SECRETS_CHECKLIST.md
+
+# ── NAS-specific deploy tool ──────────────────────────────────────────────────
+# Hardcodes /home/dev/nas/Volume1/... paths; not portable to other installs.
+tools/
+
+# ── Internal task plans & workflow ───────────────────────────────────────────
+# Instance-specific: personal URLs (ha.nealkoholka.cz, 192.168.0.170),
+# NAS paths, stale prerequisite state, and sub-agent UUIDs.
+_management/tasks/
+_management/WORKFLOW.md
+
+# ── Python cache ─────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+
+# ── OS noise ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

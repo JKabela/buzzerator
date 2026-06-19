@@ -1,0 +1,143 @@
+- id: telegram_task_ingress_claude
+  alias: 'Ingress: Telegram → Claude Smart Router'
+  description: Routes Telegram messages through Claude Haiku for smart list routing,
+    vacation mode context awareness, and list reading.
+  triggers:
+  - trigger: event
+    event_type: telegram_text
+  actions:
+  - action: conversation.process
+    data:
+      text: '{{ trigger.event.data.text }}'
+      agent_id: conversation.claude_telegram_router
+      conversation_id: telegram_{{ trigger.event.data.chat_id }}
+    response_variable: agent_response
+  - action: telegram_bot.send_message
+    data:
+      chat_id: '{{ trigger.event.data.chat_id }}'
+      message: '{{ agent_response.response.speech.plain.speech | default(''Sorry,
+        I could not process that. Try again.'') }}'
+  mode: parallel
+  max: 10
+
+- id: telegram_voice_ingress_claude
+  alias: 'Ingress: Telegram Voice → Whisper → Claude Smart Router'
+  description: Transcribes Telegram voice notes via Wyoming faster-whisper then routes
+    through Claude Haiku.
+  triggers:
+  - trigger: event
+    event_type: telegram_attachment
+    event_data:
+      file_mime_type: audio/ogg
+  actions:
+  - action: shell_command.transcribe_voice
+    data:
+      file_id: '{{ trigger.event.data.file_id }}'
+    response_variable: transcription
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ transcription.returncode == 0 and transcription.stdout
+          | trim != '''' }}'
+      sequence:
+      - action: conversation.process
+        data:
+          text: '{{ transcription.stdout | trim }}'
+          agent_id: conversation.claude_telegram_router
+          conversation_id: telegram_{{ trigger.event.data.chat_id }}
+        response_variable: agent_response
+      - action: telegram_bot.send_message
+        data:
+          chat_id: '{{ trigger.event.data.chat_id }}'
+          message: "\U0001F3A4 {{ agent_response.response.speech.plain.speech\n   |
+            default('Sorry, I could not process that. Try again.') }}"
+    default:
+    - action: telegram_bot.send_message
+      data:
+        chat_id: '{{ trigger.event.data.chat_id }}'
+        message: "\U0001F3A4 Sorry, couldn't transcribe that voice message. Please
+          try again or type it."
+  mode: parallel
+  max: 5
+
+- id: telegram_daily_task_digest
+  alias: 'Digest: Daily 17:00 Task Summary → Telegram'
+  description: Sends a formatted digest of pending todo items at 17:00. Shows home
+    lists when vacation_mode is OFF, vacation lists when ON. Skips empty sections.
+    No Anthropic API call.
+  triggers:
+  - trigger: time
+    at: '17:00:00'
+  actions:
+  - choose:
+    - conditions:
+      - condition: state
+        entity_id: input_boolean.vacation_mode
+        state: 'off'
+      sequence:
+      - action: todo.get_items
+        target:
+          entity_id:
+          - todo.shopping_list
+          - todo.household_chores
+          - todo.household_maintenance
+        data:
+          status: needs_action
+        response_variable: tasks
+      - variables:
+          shopping: '{{ tasks[''todo.shopping_list''][''items''] }}'
+          chores: '{{ tasks[''todo.household_chores''][''items''] }}'
+          maintenance: '{{ tasks[''todo.household_maintenance''][''items''] }}'
+      - action: telegram_bot.send_message
+        data:
+          chat_id: !secret telegram_chat_id_user1
+          message: "\U0001F4CB <b>Daily Tasks — {{ now().strftime('%a %-d %b') }}</b>\n{%
+            if shopping | length > 0 %}\U0001F6D2 <b>Shopping</b> {% for i in shopping
+            %}• {{ i.summary }} {% endfor %} {% endif %} {%- if chores | length >
+            0 %}\U0001F3E0 <b>Chores</b> {% for i in chores %}• {{ i.summary }} {%
+            endfor %} {% endif %} {%- if maintenance | length > 0 %}\U0001F527 <b>Maintenance</b>
+            {% for i in maintenance %}• {{ i.summary }} {% endfor %} {% endif %} {%-
+            if shopping | length == 0 and chores | length == 0 and maintenance | length
+            == 0 %}✅ All clear — no pending tasks!{% endif %}"
+    - conditions:
+      - condition: state
+        entity_id: input_boolean.vacation_mode
+        state: 'on'
+      sequence:
+      - action: todo.get_items
+        target:
+          entity_id:
+          - todo.vacation_predeparture
+          - todo.vacation_packing
+          - todo.vacation_shopping
+          - todo.vacation_chores
+          - todo.vacation_activities
+          - todo.vacation_documents
+        data:
+          status: needs_action
+        response_variable: tasks
+      - variables:
+          predep: '{{ tasks[''todo.vacation_predeparture''][''items''] }}'
+          packing: '{{ tasks[''todo.vacation_packing''][''items''] }}'
+          shopping: '{{ tasks[''todo.vacation_shopping''][''items''] }}'
+          chores: '{{ tasks[''todo.vacation_chores''][''items''] }}'
+          activities: '{{ tasks[''todo.vacation_activities''][''items''] }}'
+          docs: '{{ tasks[''todo.vacation_documents''][''items''] }}'
+      - action: telegram_bot.send_message
+        data:
+          chat_id: !secret telegram_chat_id_user1
+          message: "✈️ <b>Vacation Tasks — {{ now().strftime('%a %-d %b') }}</b>\n{%
+            if predep | length > 0 %}\U0001F3E0 <b>Before We Leave</b> {% for i in
+            predep %}• {{ i.summary }} {% endfor %} {% endif %} {%- if packing | length
+            > 0 %}\U0001F9F3 <b>Packing</b> {% for i in packing %}• {{ i.summary }}
+            {% endfor %} {% endif %} {%- if docs | length > 0 %}\U0001F4C4 <b>Documents</b>
+            {% for i in docs %}• {{ i.summary }} {% endfor %} {% endif %} {%- if shopping
+            | length > 0 %}\U0001F6D2 <b>Shopping</b> {% for i in shopping %}• {{
+            i.summary }} {% endfor %} {% endif %} {%- if chores | length > 0 %}✅ <b>At
+            Destination</b> {% for i in chores %}• {{ i.summary }} {% endfor %} {%
+            endif %} {%- if activities | length > 0 %}\U0001F5FA️ <b>Activities</b>
+            {% for i in activities %}• {{ i.summary }} {% endfor %} {% endif %} {%-
+            if predep | length == 0 and packing | length == 0 and shopping | length
+            == 0 and chores | length == 0 and activities | length == 0 and docs |
+            length == 0 %}✅ All vacation lists clear!{% endif %}"
+  mode: single

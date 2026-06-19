@@ -1,0 +1,493 @@
+# Calendar scripts — callable by Claude as LLM tools
+create_calendar_event:
+  alias: "Create Calendar Event"
+  description: "Creates an event in the Family calendar. Use ISO 8601 datetime with Prague timezone (+02:00 summer, +01:00 winter)."
+  mode: single
+  fields:
+    title:
+      name: Title
+      description: "Event title or name (e.g. Doctor appointment)"
+      required: true
+      selector:
+        text:
+    start_datetime:
+      name: Start datetime
+      description: "Start date and time in ISO 8601 format (e.g. 2026-06-20T15:00:00+02:00)"
+      required: true
+      selector:
+        text:
+    end_datetime:
+      name: End datetime
+      description: "End date and time in ISO 8601 format (e.g. 2026-06-20T16:00:00+02:00)"
+      required: true
+      selector:
+        text:
+  sequence:
+    - action: calendar.create_event
+      target:
+        entity_id: calendar.family
+      data:
+        summary: "{{ title }}"
+        start_date_time: "{{ start_datetime }}"
+        end_date_time: "{{ end_datetime }}"
+
+delete_calendar_event:
+  alias: "Delete Calendar Event"
+  description: "Deletes an event from the Family calendar using its UID. Get the UID first via calendar_get_events."
+  mode: single
+  fields:
+    uid:
+      name: Event UID
+      description: "The unique identifier of the event to delete, from the uid field in calendar_get_events result"
+      required: true
+      selector:
+        text:
+  sequence:
+    - action: calendar.delete_event
+      target:
+        entity_id: calendar.family
+      data:
+        uid: "{{ uid }}"
+
+# Buzzerator scripts — reset, idempotent templates, trip workflows
+
+reset_todo_list:
+  alias: "Reset Todo List (all items)"
+  icon: mdi:backup-restore
+  description: "Removes every item from a todo list, checked or not."
+  mode: queued
+  fields:
+    entity_id:
+      name: Todo list
+      required: true
+      selector:
+        entity:
+          domain: todo
+    notify:
+      name: Show notification
+      default: true
+      selector:
+        boolean:
+  sequence:
+  - action: todo.get_items
+    target:
+      entity_id: "{{ entity_id }}"
+    response_variable: list_response
+  - repeat:
+      for_each: "{{ list_response[entity_id]['items'] | default([]) }}"
+      sequence:
+      - action: todo.remove_item
+        target:
+          entity_id: "{{ entity_id }}"
+        data:
+          item: "{{ repeat.item.uid }}"
+  - choose:
+    - conditions: "{{ notify }}"
+      sequence:
+      - action: persistent_notification.create
+        data:
+          title: "List reset"
+          message: "All items removed from {{ entity_id }}."
+
+reset_all_vacation_lists:
+  alias: "Reset All Vacation Lists"
+  icon: mdi:delete-sweep
+  description: "Removes ALL items from all 6 vacation todo lists."
+  fields:
+    notify:
+      name: Show notification
+      default: true
+      selector:
+        boolean:
+  sequence:
+  - repeat:
+      for_each:
+        - todo.vacation_predeparture
+        - todo.vacation_packing
+        - todo.vacation_documents
+        - todo.vacation_shopping
+        - todo.vacation_chores
+        - todo.vacation_activities
+      sequence:
+      - action: script.reset_todo_list
+        data:
+          entity_id: "{{ repeat.item }}"
+          notify: false
+  - choose:
+    - conditions: "{{ notify }}"
+      sequence:
+      - action: persistent_notification.create
+        data:
+          title: "Vacation lists reset"
+          message: "All items removed from all 6 vacation lists."
+
+reset_all_home_lists:
+  alias: "Reset All Home Lists"
+  icon: mdi:delete-sweep
+  description: "Removes ALL items from shopping, chores, and maintenance lists."
+  sequence:
+  - action: script.reset_todo_list
+    data:
+      entity_id: todo.shopping_list
+      notify: false
+  - action: script.reset_todo_list
+    data:
+      entity_id: todo.household_chores
+      notify: false
+  - action: script.reset_todo_list
+    data:
+      entity_id: todo.household_maintenance
+      notify: false
+  - action: persistent_notification.create
+    data:
+      title: "Home lists reset"
+      message: "All items removed from home todo lists."
+
+clear_completed_vacation_lists:
+  alias: "Clear Completed Vacation Items"
+  icon: mdi:broom
+  description: "Removes only checked/completed items from vacation lists."
+  sequence:
+  - action: todo.remove_completed_items
+    target:
+      entity_id:
+        - todo.vacation_predeparture
+        - todo.vacation_packing
+        - todo.vacation_shopping
+        - todo.vacation_chores
+        - todo.vacation_activities
+        - todo.vacation_documents
+  - action: persistent_notification.create
+    data:
+      title: "Completed items cleared"
+      message: "Checked items removed from vacation lists. Open items unchanged."
+
+clear_all_vacation_lists:
+  alias: "Clear All Vacation Lists (legacy — completed only)"
+  description: "Legacy name; clears completed items only. Use reset_all_vacation_lists for full wipe."
+  sequence:
+  - action: script.clear_completed_vacation_lists
+
+start_new_trip:
+  alias: "Start New Trip"
+  icon: mdi:airplane-takeoff
+  description: "Wipe all vacation lists, load defaults, turn vacation mode on."
+  sequence:
+  - action: script.reset_all_vacation_lists
+    data:
+      notify: false
+  - action: script.load_all_vacation_templates
+    data:
+      notify: false
+  - action: input_boolean.turn_on
+    target:
+      entity_id: input_boolean.vacation_mode
+  - action: persistent_notification.create
+    data:
+      title: "New trip started"
+      message: "Vacation lists reset, defaults loaded, vacation mode ON."
+
+load_vacation_predeparture_template:
+  alias: "Add Pre-Departure Defaults"
+  icon: mdi:door-open
+  description: "Adds default pre-departure items that are not already on the list."
+  fields:
+    notify:
+      default: true
+      selector:
+        boolean:
+  sequence:
+  - variables:
+      list_entity: todo.vacation_predeparture
+      default_items:
+        - Stop mail / newspaper delivery
+        - Arrange pet care
+        - Notify bank of travel dates
+        - Set home alarm / ask neighbour to check in
+        - Turn off water / unplug appliances
+        - Empty fridge of perishables
+        - Take out trash
+        - Download offline maps & entertainment
+  - action: todo.get_items
+    target:
+      entity_id: "{{ list_entity }}"
+    response_variable: list_data
+  - variables:
+      existing_summaries: "{{ list_data[list_entity]['items'] | default([]) | map(attribute='summary') | list }}"
+  - repeat:
+      for_each: "{{ default_items }}"
+      sequence:
+      - choose:
+        - conditions:
+            condition: template
+            value_template: "{{ repeat.item not in existing_summaries }}"
+          sequence:
+          - action: todo.add_item
+            target:
+              entity_id: "{{ list_entity }}"
+            data:
+              item: "{{ repeat.item }}"
+  - choose:
+    - conditions: "{{ notify }}"
+      sequence:
+      - action: persistent_notification.create
+        data:
+          title: "Pre-Departure defaults"
+          message: "Added any missing default items."
+
+load_vacation_packing_template:
+  alias: "Add Packing Defaults"
+  icon: mdi:bag-suitcase
+  fields:
+    notify:
+      default: true
+      selector:
+        boolean:
+  sequence:
+  - variables:
+      list_entity: todo.vacation_packing
+      default_items:
+        - Passports
+        - Phone chargers & adapters
+        - Power bank
+        - Medications
+        - Sunscreen
+        - First aid kit
+        - Travel towels
+        - Camera & memory cards
+  - action: todo.get_items
+    target:
+      entity_id: "{{ list_entity }}"
+    response_variable: list_data
+  - variables:
+      existing_summaries: "{{ list_data[list_entity]['items'] | default([]) | map(attribute='summary') | list }}"
+  - repeat:
+      for_each: "{{ default_items }}"
+      sequence:
+      - choose:
+        - conditions:
+            condition: template
+            value_template: "{{ repeat.item not in existing_summaries }}"
+          sequence:
+          - action: todo.add_item
+            target:
+              entity_id: "{{ list_entity }}"
+            data:
+              item: "{{ repeat.item }}"
+  - choose:
+    - conditions: "{{ notify }}"
+      sequence:
+      - action: persistent_notification.create
+        data:
+          title: "Packing defaults"
+          message: "Added any missing default items."
+
+load_vacation_documents_template:
+  alias: "Add Documents Defaults"
+  icon: mdi:passport
+  fields:
+    notify:
+      default: true
+      selector:
+        boolean:
+  sequence:
+  - variables:
+      list_entity: todo.vacation_documents
+      default_items:
+        - Passports valid ≥6 months
+        - Travel insurance printed
+        - Flight tickets downloaded offline
+        - Accommodation confirmations
+        - Emergency contacts list
+        - Copies of cards & IDs (digital + physical)
+        - Local currency / notify bank
+  - action: todo.get_items
+    target:
+      entity_id: "{{ list_entity }}"
+    response_variable: list_data
+  - variables:
+      existing_summaries: "{{ list_data[list_entity]['items'] | default([]) | map(attribute='summary') | list }}"
+  - repeat:
+      for_each: "{{ default_items }}"
+      sequence:
+      - choose:
+        - conditions:
+            condition: template
+            value_template: "{{ repeat.item not in existing_summaries }}"
+          sequence:
+          - action: todo.add_item
+            target:
+              entity_id: "{{ list_entity }}"
+            data:
+              item: "{{ repeat.item }}"
+  - choose:
+    - conditions: "{{ notify }}"
+      sequence:
+      - action: persistent_notification.create
+        data:
+          title: "Documents defaults"
+          message: "Added any missing default items."
+
+load_vacation_shopping_template:
+  alias: "Add Vacation Shopping Defaults"
+  icon: mdi:cart
+  fields:
+    notify:
+      default: true
+      selector:
+        boolean:
+  sequence:
+  - variables:
+      list_entity: todo.vacation_shopping
+      default_items:
+        - Water (for arrival)
+        - Basic groceries for first day
+        - Local SIM card
+  - action: todo.get_items
+    target:
+      entity_id: "{{ list_entity }}"
+    response_variable: list_data
+  - variables:
+      existing_summaries: "{{ list_data[list_entity]['items'] | default([]) | map(attribute='summary') | list }}"
+  - repeat:
+      for_each: "{{ default_items }}"
+      sequence:
+      - choose:
+        - conditions:
+            condition: template
+            value_template: "{{ repeat.item not in existing_summaries }}"
+          sequence:
+          - action: todo.add_item
+            target:
+              entity_id: "{{ list_entity }}"
+            data:
+              item: "{{ repeat.item }}"
+  - choose:
+    - conditions: "{{ notify }}"
+      sequence:
+      - action: persistent_notification.create
+        data:
+          title: "Shopping defaults"
+          message: "Added any missing default items."
+
+load_vacation_chores_template:
+  alias: "Add At-Destination Defaults"
+  icon: mdi:clipboard-check
+  fields:
+    notify:
+      default: true
+      selector:
+        boolean:
+  sequence:
+  - variables:
+      list_entity: todo.vacation_chores
+      default_items:
+        - Check in to accommodation
+        - Locate nearest pharmacy
+        - Connect to local WiFi
+        - Set up offline maps
+  - action: todo.get_items
+    target:
+      entity_id: "{{ list_entity }}"
+    response_variable: list_data
+  - variables:
+      existing_summaries: "{{ list_data[list_entity]['items'] | default([]) | map(attribute='summary') | list }}"
+  - repeat:
+      for_each: "{{ default_items }}"
+      sequence:
+      - choose:
+        - conditions:
+            condition: template
+            value_template: "{{ repeat.item not in existing_summaries }}"
+          sequence:
+          - action: todo.add_item
+            target:
+              entity_id: "{{ list_entity }}"
+            data:
+              item: "{{ repeat.item }}"
+  - choose:
+    - conditions: "{{ notify }}"
+      sequence:
+      - action: persistent_notification.create
+        data:
+          title: "At-destination defaults"
+          message: "Added any missing default items."
+
+load_vacation_activities_template:
+  alias: "Add Activities Defaults"
+  icon: mdi:map-marker-star
+  fields:
+    notify:
+      default: true
+      selector:
+        boolean:
+  sequence:
+  - variables:
+      list_entity: todo.vacation_activities
+      default_items:
+        - Research local restaurants
+        - Book at least one experience in advance
+        - Find nearest beach / park / attraction
+        - Check local events calendar
+  - action: todo.get_items
+    target:
+      entity_id: "{{ list_entity }}"
+    response_variable: list_data
+  - variables:
+      existing_summaries: "{{ list_data[list_entity]['items'] | default([]) | map(attribute='summary') | list }}"
+  - repeat:
+      for_each: "{{ default_items }}"
+      sequence:
+      - choose:
+        - conditions:
+            condition: template
+            value_template: "{{ repeat.item not in existing_summaries }}"
+          sequence:
+          - action: todo.add_item
+            target:
+              entity_id: "{{ list_entity }}"
+            data:
+              item: "{{ repeat.item }}"
+  - choose:
+    - conditions: "{{ notify }}"
+      sequence:
+      - action: persistent_notification.create
+        data:
+          title: "Activities defaults"
+          message: "Added any missing default items."
+
+load_all_vacation_templates:
+  alias: "Add All Vacation Defaults"
+  icon: mdi:tray-arrow-down
+  description: "Adds missing default items to all 6 vacation lists (no duplicates)."
+  fields:
+    notify:
+      default: true
+      selector:
+        boolean:
+  sequence:
+  - action: script.load_vacation_predeparture_template
+    data:
+      notify: false
+  - action: script.load_vacation_packing_template
+    data:
+      notify: false
+  - action: script.load_vacation_documents_template
+    data:
+      notify: false
+  - action: script.load_vacation_shopping_template
+    data:
+      notify: false
+  - action: script.load_vacation_chores_template
+    data:
+      notify: false
+  - action: script.load_vacation_activities_template
+    data:
+      notify: false
+  - choose:
+    - conditions: "{{ notify }}"
+      sequence:
+      - action: persistent_notification.create
+        data:
+          title: "Vacation defaults"
+          message: "Added any missing items to all vacation lists."

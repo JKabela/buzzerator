@@ -1,0 +1,43 @@
+# ============================================================
+# Buzzerator — add these sections to your configuration.yaml
+# ============================================================
+
+# Shell command for Telegram voice transcription via Wyoming faster-whisper
+shell_command:
+  transcribe_voice: "python3 /config/scripts/transcribe_telegram_voice.py '{{ file_id }}'"
+
+# Telegram bot (polling mode) — replace secrets in secrets.yaml
+telegram_bot:
+  - platform: polling
+    api_key: !secret telegram_api_token
+    allowed_chat_ids:
+      - !secret telegram_chat_id_user1
+      # Uncomment and add second user if needed:
+      # - !secret telegram_chat_id_user2
+    parse_mode: html
+
+# Template sensor: next 3 Family calendar events (refreshed every 15 min)
+template:
+  - trigger:
+      - trigger: time_pattern
+        minutes: "/15"
+      - trigger: homeassistant
+        event: start
+    action:
+      - action: calendar.get_events
+        target:
+          entity_id: calendar.family
+        data:
+          start_date_time: "{{ now().isoformat() }}"
+          end_date_time: "{{ (now() + timedelta(days=14)).isoformat() }}"
+        response_variable: upcoming
+    sensor:
+      - name: "Family Next Events"
+        unique_id: family_next_3_events
+        state: "{{ (upcoming.get('calendar.family', {}).get('events', []) | list)[:3] | length }}"
+        attributes:
+          events: "{{ (upcoming.get('calendar.family', {}).get('events', []) | list)[:3] }}"
+
+# Also ensure these top-level includes are in your configuration.yaml:
+# automation: !include automations.yaml
+# script: !include scripts.yaml
