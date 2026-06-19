@@ -22,8 +22,7 @@ SECRETS_CHECKLIST.md
 tools/
 
 # ── Internal task plans & workflow ───────────────────────────────────────────
-# Instance-specific: personal URLs (ha.nealkoholka.cz, 192.168.0.170),
-# NAS paths, stale prerequisite state, and sub-agent UUIDs.
+# Instance-specific: personal URLs, NAS paths, stale prerequisite state.
 _management/tasks/
 _management/WORKFLOW.md
 
